@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Validador de Productos</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">✓</span>
+      <div>
+        <h1>Validador de Productos Digitales</h1>
+        <p class="sub">Ebooks · guías PDF · plantillas · low ticket (hasta USD 30)</p>
+      </div>
+    </div>
+    <div class="project-bar">
+      <select id="projectSelect" aria-label="Proyecto"></select>
+      <button id="newProject" class="btn">+ Nuevo</button>
+      <button id="renameProject" class="btn ghost">Renombrar</button>
+      <button id="deleteProject" class="btn ghost danger">Borrar</button>
+      <button id="exportData" class="btn ghost">Exportar</button>
+      <label class="btn ghost file">Importar<input type="file" id="importData" accept="application/json" hidden></label>
+    </div>
+  </header>
+
+  <nav class="tabs" id="tabs"></nav>
+
+  <main id="view"></main>
+
+  <footer class="foot">Los datos se guardan en este navegador. Exportá el JSON para tener una copia.</footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

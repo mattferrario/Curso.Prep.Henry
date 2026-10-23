@@ -4,6 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Validador de Productos</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Figtree:wght@400;500;600&display=swap">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -13,6 +15,7 @@
       <div>
         <h1>Validador de Productos Digitales</h1>
         <p class="sub">Ebooks · guías PDF · plantillas · low ticket (hasta USD 30)</p>
+        <p class="sync" id="syncStatus" data-kind="local" aria-live="polite">Guardado en este navegador</p>
       </div>
     </div>
     <div class="project-bar">
@@ -29,7 +32,7 @@
 
   <main id="view"></main>
 
-  <footer class="foot">Los datos se guardan en este navegador. Exportá el JSON para tener una copia.</footer>
+  <footer class="foot">Exportá el JSON cada tanto para tener una copia de respaldo.</footer>
 
   <script src="app.js"></script>
 </body>

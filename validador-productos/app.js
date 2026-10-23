@@ -1,5 +1,6 @@
 /* Validador de Productos Digitales — app en un solo archivo, sin dependencias.
-   Los datos se guardan en localStorage del navegador. */
+   Los datos se guardan en localStorage del navegador y, cuando la app corre
+   publicada en claude.ai, también en tu cuenta para sincronizar dispositivos. */
 
 const STORAGE_KEY = 'validador-productos-v1';
 const WINNER_DAYS = 30;     // un anuncio activo 30+ días suele ser rentable
@@ -119,19 +120,150 @@ function newProject(name) {
   };
 }
 
-function load() {
+// Proyecto de ejemplo para el primer uso, así se ve cómo funciona cada paso.
+function exampleProject() {
+  const p = newProject('Ejemplo: dormir al bebé');
+  const daysAgo = n => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+  Object.assign(p.problem, {
+    problem: 'Mi bebé se despierta cada hora y ya no doy más del cansancio.',
+    who: 'Mamás primerizas con bebés de 4 a 12 meses',
+    type: 'Dolor urgente', urgency: 5, frequency: 'Todos los días', paying: 'Sí, gastan dinero',
+    evidence: ['Grupos de Facebook', 'Comentarios de Instagram', 'Reseñas 1-3★ en Amazon'],
+    quotes: '"Probé de todo y nada funciona"\n"No quiero dejarlo llorar"',
+    timeToResult: 'Menos de 7 días',
+  });
+  Object.assign(p.niche, { market: 'Crianza y familia', subniche: 'Sueño infantil', microniche: 'Sueño sin llanto para bebés de 4 a 12 meses', size: 4 });
+  p.research.keywords = 'dormir bebé, sueño infantil';
+  p.ads = [
+    { advertiser: 'Ejemplo A', startDate: daysAgo(62), activeAds: 8, format: 'Video', angle: 'Dormí toda la noche en 7 días', price: 9.9 },
+    { advertiser: 'Ejemplo B', startDate: daysAgo(41), activeAds: 3, format: 'UGC', angle: 'Sin dejarlo llorar', price: 12 },
+    { advertiser: 'Ejemplo C', startDate: daysAgo(9), activeAds: 1, format: 'Imagen', angle: 'Rutina de sueño PDF', price: 7 },
+  ];
+  p.competitors = [
+    { name: 'Guía del sueño (ejemplo)', platform: 'Hotmart', price: 14.9, reviews: 230, rating: 4.1, weaknesses: 'Muy genérica, no cubre siestas' },
+    { name: 'Ebook sueño bebé (ejemplo)', platform: 'Amazon Kindle', price: 6.99, reviews: 85, rating: 3.9, weaknesses: 'Recomienda dejarlo llorar' },
+  ];
+  p.offer.promise = 'Dormí a tu bebé en 7 noches sin dejarlo llorar';
+  p.offer.format = 'Guía PDF';
+  return p;
+}
+
+function readLocal() {
   try {
     const s = JSON.parse(localStorage.getItem(STORAGE_KEY));
     if (s && Array.isArray(s.projects) && s.projects.length) return s;
   } catch (e) { /* storage bloqueado o datos corruptos */ }
-  const p = newProject('Mi primer ebook');
+  return null;
+}
+
+function load() {
+  const s = readLocal();
+  if (s) return s;
+  const p = exampleProject();
   return { projects: [p], currentId: p.id, tab: 'resumen' };
 }
 
 let state = load();
 
-function save() {
+function saveLocal() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) { /* ignorar */ }
+}
+
+// Guarda un cambio en un proyecto: local al instante y en la nube con un pequeño retraso.
+function save(id = state.currentId) {
+  const p = state.projects.find(x => x.id === id);
+  if (p) p.updatedAt = Date.now();
+  saveLocal();
+  if (id) { sync.dirty.add(id); scheduleSync(); }
+}
+
+// ---------- Sincronización (solo publicada en claude.ai) ----------
+
+const sync = { col: null, dirty: new Set(), deleted: new Set(), timer: null, busy: false };
+
+function setSyncStatus(kind) {
+  const el = document.querySelector('#syncStatus');
+  if (!el) return;
+  const text = {
+    local: 'Guardado en este navegador',
+    connecting: 'Conectando…',
+    saving: 'Guardando…',
+    synced: 'Sincronizado en tu cuenta',
+    error: 'No se pudo sincronizar, se reintentará',
+  }[kind];
+  el.textContent = text;
+  el.dataset.kind = kind;
+}
+
+function scheduleSync() {
+  if (!sync.col) return;
+  clearTimeout(sync.timer);
+  sync.timer = setTimeout(flushSync, 900);
+}
+
+async function flushSync() {
+  if (!sync.col) return;
+  if (sync.busy) { scheduleSync(); return; }
+  sync.busy = true;
+  setSyncStatus('saving');
+  try {
+    for (const id of [...sync.dirty]) {
+      sync.dirty.delete(id);
+      const p = state.projects.find(x => x.id === id);
+      if (p) await sync.col.doc(id).set({ json: JSON.stringify(p), updatedAt: p.updatedAt || Date.now() });
+    }
+    for (const id of [...sync.deleted]) {
+      sync.deleted.delete(id);
+      await sync.col.doc(id).delete();
+    }
+    setSyncStatus('synced');
+  } catch (e) {
+    setSyncStatus('error');
+    sync.timer = setTimeout(flushSync, 15000);
+  } finally {
+    sync.busy = false;
+  }
+}
+
+async function connectSync() {
+  if (!window.claude || typeof window.claude.use !== 'function') { setSyncStatus('local'); return; }
+  setSyncStatus('connecting');
+  const [db, user] = await Promise.all([window.claude.use('db'), window.claude.use('user')]);
+  const uid = user && await user.id();
+  if (!db || !uid) { setSyncStatus('local'); return; }
+  const col = db.collection('data/users/' + uid);
+  let remote;
+  try {
+    const snap = await col.get();
+    remote = snap.docs.map(d => { try { return JSON.parse(d.data().json); } catch (e) { return null; } }).filter(Boolean);
+  } catch (e) { setSyncStatus('local'); return; }
+
+  const flagKey = STORAGE_KEY + ':synced:' + uid;
+  let syncedBefore = false;
+  try { syncedBefore = localStorage.getItem(flagKey) === '1'; } catch (e) { /* ignorar */ }
+
+  const byId = new Map(remote.map(p => [p.id, p]));
+  const isUntouchedExample = p => p.name.startsWith('Ejemplo') && !p.updatedAt;
+  for (const p of state.projects) {
+    const r = byId.get(p.id);
+    if (r) {
+      // Mismo proyecto en los dos lados: gana el editado más recientemente.
+      if ((p.updatedAt || 0) > (r.updatedAt || 0)) { byId.set(p.id, p); sync.dirty.add(p.id); }
+    } else if (!syncedBefore && !(remote.length && isUntouchedExample(p))) {
+      // Primera conexión desde este navegador: subir lo que había cargado localmente.
+      byId.set(p.id, p); sync.dirty.add(p.id);
+    }
+  }
+  const merged = [...byId.values()].sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
+  if (merged.length) {
+    state.projects = merged;
+    if (!merged.some(p => p.id === state.currentId)) state.currentId = merged[0].id;
+  }
+  try { localStorage.setItem(flagKey, '1'); } catch (e) { /* ignorar */ }
+  sync.col = col;
+  saveLocal();
+  renderAll();
+  if (sync.dirty.size) flushSync(); else setSyncStatus('synced');
 }
 
 const current = () => state.projects.find(p => p.id === state.currentId) || state.projects[0];
@@ -285,7 +417,9 @@ function score(p) {
   return { total, parts, a, c, e };
 }
 
-function verdict(total) {
+function verdict(total, s) {
+  if (total >= 70 && s && (s.a.total < 5 || s.c.total < 3))
+    return { cls: 'warn', label: 'Prometedor: cargá 5+ anuncios y 3+ competidores para confirmarlo', color: 'var(--warn)' };
   if (total >= 70) return { cls: 'good', label: 'Validado: lanzá la campaña de prueba', color: 'var(--good)' };
   if (total >= 45) return { cls: 'warn', label: 'Dudoso: completá la investigación o ajustá la oferta', color: 'var(--warn)' };
   return { cls: 'bad', label: 'No validado: pivoteá el problema o el nicho', color: 'var(--bad)' };
@@ -354,7 +488,7 @@ const TABS = [
 
 function renderSummary(p) {
   const s = score(p);
-  const v = verdict(s.total);
+  const v = verdict(s.total, s);
   const steps = TABS.filter(t => t.done);
   return `<h2>${esc(p.name)}</h2><p class="lead">Puntaje de validación calculado con todo lo que cargaste. Completá cada paso para que sea confiable.</p>
   <div id="live">
@@ -620,44 +754,90 @@ document.addEventListener('click', e => {
   const t = e.target.closest('[data-tab],[data-add],[data-del]');
   if (!t) return;
   const p = current();
-  if (t.dataset.tab) { state.tab = t.dataset.tab; save(); renderTabs(); renderView(); }
+  if (t.dataset.tab) { state.tab = t.dataset.tab; saveLocal(); renderTabs(); renderView(); }
   if (t.dataset.add) { p[t.dataset.add].push({}); save(); renderView(); }
   if (t.dataset.del) { p[t.dataset.del].splice(+t.dataset.i, 1); save(); renderView(); }
 });
 
-$('#projectSelect').addEventListener('change', e => { state.currentId = e.target.value; save(); renderAll(); });
+$('#projectSelect').addEventListener('change', e => { state.currentId = e.target.value; saveLocal(); renderAll(); });
 
-$('#newProject').addEventListener('click', () => {
-  const name = prompt('Nombre del producto o idea:', 'Nueva idea');
+// Diálogo propio: prompt/confirm/alert no funcionan dentro de una página publicada.
+function ask({ title, text = '', input = null, ok = 'Aceptar', danger = false, cancel = true }) {
+  return new Promise(resolve => {
+    const wrap = document.createElement('div');
+    wrap.className = 'modal-wrap';
+    wrap.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <h3 id="modalTitle">${esc(title)}</h3>
+      ${text ? `<p>${esc(text)}</p>` : ''}
+      ${input != null ? `<input type="text" id="modalInput" value="${esc(input)}">` : ''}
+      <div class="modal-actions">
+        ${cancel ? '<button class="btn ghost" data-r="cancel">Cancelar</button>' : ''}
+        <button class="btn ${danger ? 'danger-solid' : ''}" data-r="ok">${esc(ok)}</button>
+      </div></div>`;
+    document.body.appendChild(wrap);
+    const field = wrap.querySelector('#modalInput');
+    (field || wrap.querySelector('[data-r=ok]')).focus();
+    if (field) field.select();
+    const done = r => {
+      wrap.remove();
+      resolve(r === 'ok' ? (field ? field.value.trim() || null : true) : null);
+    };
+    wrap.addEventListener('click', e => {
+      if (e.target === wrap) done('cancel');
+      const b = e.target.closest('[data-r]');
+      if (b) done(b.dataset.r);
+    });
+    wrap.addEventListener('keydown', e => {
+      if (e.key === 'Escape') done('cancel');
+      if (e.key === 'Enter' && field) done('ok');
+    });
+  });
+}
+
+$('#newProject').addEventListener('click', async () => {
+  const name = await ask({ title: 'Nueva idea', text: 'Nombre del producto o idea:', input: '', ok: 'Crear' });
   if (!name) return;
   const p = newProject(name);
   state.projects.push(p);
   state.currentId = p.id;
   state.tab = 'problema';
-  save(); renderAll();
+  save(p.id); renderAll();
 });
 
-$('#renameProject').addEventListener('click', () => {
+$('#renameProject').addEventListener('click', async () => {
   const p = current();
-  const name = prompt('Nuevo nombre:', p.name);
+  const name = await ask({ title: 'Renombrar', input: p.name, ok: 'Guardar' });
   if (!name) return;
-  p.name = name; save(); renderAll();
+  p.name = name; save(p.id); renderAll();
 });
 
-$('#deleteProject').addEventListener('click', () => {
+$('#deleteProject').addEventListener('click', async () => {
   const p = current();
-  if (!confirm(`¿Borrar "${p.name}"? No se puede deshacer.`)) return;
+  const yes = await ask({ title: `¿Borrar "${p.name}"?`, text: 'Se borra en todos tus dispositivos y no se puede deshacer.', ok: 'Borrar', danger: true });
+  if (!yes) return;
   state.projects = state.projects.filter(x => x.id !== p.id);
-  if (!state.projects.length) state.projects.push(newProject('Mi primer ebook'));
+  sync.dirty.delete(p.id);
+  sync.deleted.add(p.id);
+  if (!state.projects.length) {
+    const fresh = newProject('Mi primer ebook');
+    state.projects.push(fresh);
+    sync.dirty.add(fresh.id);
+  }
   state.currentId = state.projects[0].id;
-  save(); renderAll();
+  saveLocal(); scheduleSync(); renderAll();
 });
 
-$('#exportData').addEventListener('click', () => {
-  const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+$('#exportData').addEventListener('click', async () => {
+  const json = JSON.stringify(state, null, 2);
+  const filename = `validador-${new Date().toISOString().slice(0, 10)}.json`;
+  const downloads = window.claude && typeof window.claude.use === 'function' ? await window.claude.use('downloads') : null;
+  if (downloads) {
+    try { await downloads.save({ filename, data: new Blob([json], { type: 'application/json' }) }); } catch (e) { /* el usuario canceló */ }
+    return;
+  }
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `validador-${new Date().toISOString().slice(0, 10)}.json`;
+  a.href = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+  a.download = filename;
   a.click();
   URL.revokeObjectURL(a.href);
 });
@@ -668,12 +848,20 @@ $('#importData').addEventListener('change', async e => {
   try {
     const data = JSON.parse(await file.text());
     if (!Array.isArray(data.projects) || !data.projects.length) throw new Error('formato');
-    state = { tab: 'resumen', ...data, currentId: data.currentId || data.projects[0].id };
-    save(); renderAll();
+    // Los proyectos importados se suman a los que ya tenés (si el id coincide, se reemplaza).
+    data.projects.forEach(p => {
+      const i = state.projects.findIndex(x => x.id === p.id);
+      if (i >= 0) state.projects[i] = p; else state.projects.push(p);
+      p.updatedAt = Date.now();
+      sync.dirty.add(p.id);
+    });
+    state.currentId = data.projects[0].id;
+    saveLocal(); scheduleSync(); renderAll();
   } catch (err) {
-    alert('El archivo no es un respaldo válido del validador.');
+    ask({ title: 'No se pudo importar', text: 'El archivo no es un respaldo válido del validador.', cancel: false });
   }
   e.target.value = '';
 });
 
 renderAll();
+connectSync();

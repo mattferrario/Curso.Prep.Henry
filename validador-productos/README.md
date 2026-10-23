@@ -4,7 +4,9 @@ Dashboard para validar ebooks, guías PDF y otros productos digitales low ticket
 
 ## Cómo usarlo
 
-Abrí `index.html` en el navegador. No necesita instalación ni servidor. Los datos quedan guardados en el navegador; usá **Exportar** para bajar un respaldo en JSON e **Importar** para recuperarlo o pasarlo a otra computadora.
+Abrí `index.html` en el navegador. No necesita instalación ni servidor. Abierta así, los datos quedan guardados en el navegador; usá **Exportar** para bajar un respaldo en JSON e **Importar** para recuperarlo o pasarlo a otra computadora.
+
+Publicada como página privada en claude.ai, además sincroniza tus proyectos en tu cuenta, así los ves en la compu y en el celular. El indicador debajo del título muestra si está sincronizado.
 
 ## Pasos
 
